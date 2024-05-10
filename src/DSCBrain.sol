@@ -52,8 +52,9 @@ contract DSCBrain is ReentrancyGuard {
     error DSCBrain__DepositColletralShouldBeMoreThanZero();
     error DSCBrain__TokenAddressAndPriceFeedAddressLengthMustBeSame();
     error DSCBrain__ThisTokenIsNotAllowed();
-    error DSC__TransferOfTokenFailedFromUsersAccountToContract();
-    error DSC__HealthIsNotGoodGoToDoctor(uint256 healthFactor);
+    error DSCBrain__TransferOfTokenFailedFromUsersAccountToContract();
+    error DSCBrain__HealthIsNotGoodGoToDoctor(uint256 healthFactor);
+    error DSCBrain__MintingFailed();
 
     /////////////////////////
     // State variable //////
@@ -63,6 +64,7 @@ contract DSCBrain is ReentrancyGuard {
     uint256 private constant LIQUIDATION_THRESOLD = 50; // 200% overcolletralized
     uint256 private constant LIQUIDATION_PRECISION = 100;
     uint256 private constant MIN_HEALTH_FACTOR = 1;
+
     mapping(address token => address priceFeed) private s_priceFeed;
     DecentralizedStableCoin private immutable i_dsc;
     mapping(address user => mapping(address token => uint256 amount)) private s_colletralDeposit;
@@ -103,9 +105,9 @@ contract DSCBrain is ReentrancyGuard {
             revert DSCBrain__TokenAddressAndPriceFeedAddressLengthMustBeSame();
         }
 
-        for (uint256 i = 0; i < tokenAddresses.length; i++) {
+        for (uint256 i = 0; i <tokenAddresses.length; i++) {
             s_priceFeed[tokenAddresses[i]] = priceFeedAddresses[i];
-            s_colletralToken[i] = tokenAddresses[i];
+            s_colletralToken.push(tokenAddresses[i]);
         }
         i_dsc = DecentralizedStableCoin(dscAddress);
     }
@@ -131,7 +133,7 @@ contract DSCBrain is ReentrancyGuard {
         emit colletrlDeposit(msg.sender, tokenColletralAddress, amountColletral);
         bool success = IERC20(tokenColletralAddress).transferFrom(msg.sender, address(this), amountColletral);
         if (!success) {
-            revert DSC__TransferOfTokenFailedFromUsersAccountToContract();
+            revert DSCBrain__TransferOfTokenFailedFromUsersAccountToContract();
         }
     }
 
@@ -148,6 +150,10 @@ contract DSCBrain is ReentrancyGuard {
     function mintDSC(uint256 amountDscToMint) external moreThanZero(amountDscToMint) nonReentrant {
         s_DscMinted[msg.sender] += amountDscToMint;
         _revertHealthFactorIsBroken(msg.sender);
+        bool success = i_dsc.mint(msg.sender, amountDscToMint);
+        if (!success) {
+            revert DSCBrain__MintingFailed();
+        }
     }
 
     function burnDSC() external {}
@@ -191,7 +197,7 @@ contract DSCBrain is ReentrancyGuard {
     function _revertHealthFactorIsBroken(address user) internal view {
         uint256 userHealthFactor = _healthFactor(user);
         if (userHealthFactor < MIN_HEALTH_FACTOR) {
-            revert DSC__HealthIsNotGoodGoToDoctor(userHealthFactor);
+            revert DSCBrain__HealthIsNotGoodGoToDoctor(userHealthFactor);
         }
     }
 
