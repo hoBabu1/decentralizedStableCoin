@@ -26,7 +26,8 @@ pragma solidity ^0.8.0;
 import {DecentralizedStableCoin} from "src/DecentralizedStableCoin.sol";
 import {ReentrancyGuard} from "lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
-
+import {AggregatorV3Interface} from
+    "lib/chainlink-brownie-contracts/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
 /**
  * @title DSCBrain
  * @author Aman Kumar aka hoBabu aka Dhanyosmi
@@ -42,6 +43,7 @@ import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.so
  * @notice This contract is the core of the DSC System. It handles all the logic for mining and redeeming DSC, as well as depositing and withdrawing colletral.
  * @notice This contract is VERY loosely based on DAI system.
  */
+
 contract DSCBrain is ReentrancyGuard {
     /////////////////////////
     /// Errors //////////////
@@ -51,14 +53,21 @@ contract DSCBrain is ReentrancyGuard {
     error DSCBrain__TokenAddressAndPriceFeedAddressLengthMustBeSame();
     error DSCBrain__ThisTokenIsNotAllowed();
     error DSC__TransferOfTokenFailedFromUsersAccountToContract();
+    error DSC__HealthIsNotGoodGoToDoctor(uint256 healthFactor);
 
     /////////////////////////
     // State variable //////
     ////////////////////////
+    uint256 private constant ADDRESS_FEED_PRECISION = 1e10;
+    uint256 private constant PRECISION = 1e10;
+    uint256 private constant LIQUIDATION_THRESOLD = 50; // 200% overcolletralized
+    uint256 private constant LIQUIDATION_PRECISION = 100;
+    uint256 private constant MIN_HEALTH_FACTOR = 1;
     mapping(address token => address priceFeed) private s_priceFeed;
     DecentralizedStableCoin private immutable i_dsc;
     mapping(address user => mapping(address token => uint256 amount)) private s_colletralDeposit;
     mapping(address user => uint256 DscMinted) private s_DscMinted;
+    address[] private s_colletralToken;
 
     /////////////////////////
     /// EVENTS///////////////
@@ -96,6 +105,7 @@ contract DSCBrain is ReentrancyGuard {
 
         for (uint256 i = 0; i < tokenAddresses.length; i++) {
             s_priceFeed[tokenAddresses[i]] = priceFeedAddresses[i];
+            s_colletralToken[i] = tokenAddresses[i];
         }
         i_dsc = DecentralizedStableCoin(dscAddress);
     }
@@ -145,30 +155,74 @@ contract DSCBrain is ReentrancyGuard {
     function liquidate() external {}
 
     function getHealthFactor() external view {}
-    ///////////////////////////////////
-    // private & internal view Functions ///
-    //////////////////////////////////
-    function _getAccountInfoOfUser(address user) private view returns (uint256, uint256) {
+    ///////////////////////////////////////
+    // private & internal view Functions///
+    //////////////////////////////////////
 
+    function _getAccountInfoOfUser(address user)
+        private
+        view
+        returns (uint256 totalDscMinted, uint256 colletralValueInUSD)
+    {
+        totalDscMinted = s_DscMinted[user];
+        colletralValueInUSD = getColletralValueInUSD(user);
     }
     /**
      * Returns how close a person is about to liquidate
      * If user gets below 1 then they can get liquidated
      */
+
     function _healthFactor(address user) private view returns (uint256) {
-        // calculte how much they have deposited 
+        // calculte how much they have deposited
         // get how much they have deposited what
         // convert it into usd and add it
         // check they have minted how much --> mint amount should be less then colletral
         (uint256 totalDscMinted, uint256 colletralValueInUSD) = _getAccountInfoOfUser(user);
+        uint256 colletralAdjustedForThreshold = (colletralValueInUSD * LIQUIDATION_THRESOLD) / 100;
+        return (colletralAdjustedForThreshold * PRECISION) / totalDscMinted;
+        // return (colletralValueInUSD/totalDscMinted);
     }
     /**
-     *
      * @param user - User whose health factor will be checked
+     *  check do they have enough colletral
+     *  Revert if they dont have
      */
 
     function _revertHealthFactorIsBroken(address user) internal view {
-        // check do they have enough colletral
-        // Revert if they dont have
+        uint256 userHealthFactor = _healthFactor(user);
+        if (userHealthFactor < MIN_HEALTH_FACTOR) {
+            revert DSC__HealthIsNotGoodGoToDoctor(userHealthFactor);
+        }
+    }
+
+    ///////////////////////////////////////
+    // public & internal view Functions///
+    //////////////////////////////////////
+
+    /**
+     * @param user address of user
+     * @return totalColletralValueInUSD Returns the Total Colletral Value in USD
+     */
+    function getColletralValueInUSD(address user) public view returns (uint256 totalColletralValueInUSD) {
+        // loop through all token
+        //get amount*price
+        for (uint256 i = 0; i < s_colletralToken.length; i++) {
+            address token = s_colletralToken[i];
+            uint256 amount = s_colletralDeposit[user][token];
+            totalColletralValueInUSD += getValueinUsd(token, amount);
+        }
+        return totalColletralValueInUSD;
+    }
+
+    /**
+     * @param token address of token like wBTC , wETH
+     * @param amount Collteral of specific token
+     * @return - It returns the colletral into USD
+     *  Using `AggregatorV3Interface` to get the price of 1ETH/1BTC in terms of USDC, Total amount of wBTC/wETH * price
+     */
+    function getValueinUsd(address token, uint256 amount) public view returns (uint256) {
+        AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeed[token]);
+        (, int256 price,,,) = priceFeed.latestRoundData();
+        return (uint256(price) * ADDRESS_FEED_PRECISION) * amount / PRECISION;
     }
 }
