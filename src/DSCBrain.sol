@@ -60,7 +60,7 @@ contract DSCBrain is ReentrancyGuard {
     // State variable //////
     ////////////////////////
     uint256 private constant ADDRESS_FEED_PRECISION = 1e10;
-    uint256 private constant PRECISION = 1e10;
+    uint256 private constant PRECISION = 1e18;
     uint256 private constant LIQUIDATION_THRESOLD = 50; // 200% overcolletralized
     uint256 private constant LIQUIDATION_PRECISION = 100;
     uint256 private constant MIN_HEALTH_FACTOR = 1;
@@ -105,7 +105,7 @@ contract DSCBrain is ReentrancyGuard {
             revert DSCBrain__TokenAddressAndPriceFeedAddressLengthMustBeSame();
         }
 
-        for (uint256 i = 0; i <tokenAddresses.length; i++) {
+        for (uint256 i = 0; i < tokenAddresses.length; i++) {
             s_priceFeed[tokenAddresses[i]] = priceFeedAddresses[i];
             s_colletralToken.push(tokenAddresses[i]);
         }
